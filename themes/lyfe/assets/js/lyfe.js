@@ -49,10 +49,10 @@ const fakeDataInput = {
 
 var switchCheckbox = document.getElementById("switch-bg");
 
-function Config(){
+function Config() {
   this.radius = 50;
-  this.hexHeight = ((3/2)*this.radius)
-  this.hexWidth = (Math.sqrt(3)*this.radius)
+  this.hexHeight = ((3 / 2) * this.radius)
+  this.hexWidth = (Math.sqrt(3) * this.radius)
 
   // viewport size, updated on resize
   this.width = 0
@@ -62,7 +62,7 @@ function Config(){
   this.rows = 0
 }
 
-function syncViewport(config){
+function syncViewport(config) {
   config.width = window.innerWidth
   config.height = window.innerHeight
 }
@@ -75,14 +75,14 @@ const CAP_COLOR_PALETTE = {
   medium: "#331b53",
   high: "#1b3153",
 }
-const THEME_COLOR =  "#78E2A0"
+const THEME_COLOR = "#78E2A0"
 
 // Add new particules here. `hex` is the {col, row} of the hex whose top
 // vertex the particule starts on. `speed` is fraction of an edge per frame
 // (1/200 ≈ 200 frames per edge at 60fps ≈ ~3.3s per edge).
 const PARTICULE_CONFIGS = [
-  { name: "l", color: "white",       hex: { col: 2, row: 3 }, speed: 1/200 },
-  { name: "e", color: THEME_COLOR,   hex: { col: 4, row: 2 }, speed: 1/200 },
+  { name: "l", color: "white", hex: { col: 2, row: 3 }, speed: 1 / 400 },
+  { name: "e", color: THEME_COLOR, hex: { col: 4, row: 2 }, speed: 1 / 400 },
 ]
 
 var grid;
@@ -97,7 +97,7 @@ function createGrid(config) {
 // positions never change, so existing palette colors and particule positions
 // stay valid; only newly added hexes get fresh colors.
 function ensureGridCovers(config) {
-  const wantCols = Math.ceil(config.width  / config.hexWidth)  + 1
+  const wantCols = Math.ceil(config.width / config.hexWidth) + 1
   const wantRows = Math.ceil(config.height / config.hexHeight) + 1
   if (wantCols <= config.cols && wantRows <= config.rows) return
   config.cols = Math.max(config.cols, wantCols)
@@ -107,7 +107,7 @@ function ensureGridCovers(config) {
 }
 
 function drawHexagonGrid() {
-    grid.forEach(drawHex);
+  grid.forEach(drawHex);
 }
 
 // Cap-status cells are pinned to the bottom-right of the *initial* viewport
@@ -115,7 +115,7 @@ function drawHexagonGrid() {
 function initCapCells(config) {
   const y = config.height - config.hexHeight
   const overrides = [
-    { x: config.width - config.hexWidth,     status: fakeDataInput.capacity.k.status },
+    { x: config.width - config.hexWidth, status: fakeDataInput.capacity.k.status },
     { x: config.width - config.hexWidth * 2, status: fakeDataInput.capacity.p.status },
     { x: config.width - config.hexWidth * 3, status: fakeDataInput.capacity.s.status },
   ]
@@ -127,11 +127,11 @@ function initCapCells(config) {
 
 const HEX_STROKE = "#000"
 
-function drawHex(hex){
+function drawHex(hex) {
   ctx.beginPath();
   ctx.moveTo(hex.corners[0].x, hex.corners[0].y);
   for (let i = 1; i < 6; i++) {
-      ctx.lineTo(hex.corners[i].x, hex.corners[i].y);
+    ctx.lineTo(hex.corners[i].x, hex.corners[i].y);
   }
   ctx.closePath();
   ctx.fillStyle = getColorOfHex(hex)
@@ -152,7 +152,7 @@ function generateColorsFromEachHex(currentHex) {
   generateColors(currentHex, COLOR_PALETTE)
 }
 
-function drawParticuleAt(p){
+function drawParticuleAt(p) {
   ctx.beginPath();
   ctx.arc(p.position.x, p.position.y, p.radius, 0, Math.PI * 2, false);
   ctx.strokeStyle = p.color;
@@ -181,8 +181,8 @@ const Direction = {
 }
 
 const ALLOWED_DIRECTIONS = {
-  [VertexType.TOP]:    [Direction.UP,   Direction.DOWN_LEFT, Direction.DOWN_RIGHT],
-  [VertexType.BOTTOM]: [Direction.DOWN, Direction.UP_LEFT,   Direction.UP_RIGHT],
+  [VertexType.TOP]: [Direction.UP, Direction.DOWN_LEFT, Direction.DOWN_RIGHT],
+  [VertexType.BOTTOM]: [Direction.DOWN, Direction.UP_LEFT, Direction.UP_RIGHT],
 }
 
 function flipVertexType(t) {
@@ -197,12 +197,12 @@ function edgeVector(direction, R) {
   const sx = R * SQRT3 / 2
   const sy = R / 2
   switch (direction) {
-    case Direction.UP:         return { x:   0, y:  -R }
-    case Direction.DOWN:       return { x:   0, y:   R }
-    case Direction.UP_LEFT:    return { x: -sx, y: -sy }
-    case Direction.UP_RIGHT:   return { x:  sx, y: -sy }
-    case Direction.DOWN_LEFT:  return { x: -sx, y:  sy }
-    case Direction.DOWN_RIGHT: return { x:  sx, y:  sy }
+    case Direction.UP: return { x: 0, y: -R }
+    case Direction.DOWN: return { x: 0, y: R }
+    case Direction.UP_LEFT: return { x: -sx, y: -sy }
+    case Direction.UP_RIGHT: return { x: sx, y: -sy }
+    case Direction.DOWN_LEFT: return { x: -sx, y: sy }
+    case Direction.DOWN_RIGHT: return { x: sx, y: sy }
   }
 }
 
@@ -214,7 +214,7 @@ function makeParticule(name, color, x, y, vertexType, speed) {
     speed: speed,
     vertexType: vertexType,
     startPos: { x: x, y: y },
-    endPos:   { x: x, y: y },
+    endPos: { x: x, y: y },
     position: { x: x, y: y },
     // start at end-of-edge so the very first move picks a fresh edge
     t: 1,
@@ -223,7 +223,7 @@ function makeParticule(name, color, x, y, vertexType, speed) {
 
 function isInBounds(point, config) {
   return point.x >= 0 && point.x <= config.width
-      && point.y >= 0 && point.y <= config.height
+    && point.y >= 0 && point.y <= config.height
 }
 
 function pickNextEdge(p, config) {
@@ -235,7 +235,7 @@ function pickNextEdge(p, config) {
 
   const v = choices[Math.floor(Math.random() * choices.length)]
   p.startPos = { x: p.endPos.x, y: p.endPos.y }
-  p.endPos   = { x: p.startPos.x + v.x, y: p.startPos.y + v.y }
+  p.endPos = { x: p.startPos.x + v.x, y: p.startPos.y + v.y }
   p.vertexType = flipVertexType(p.vertexType)
   p.t = 0
 }
@@ -250,8 +250,8 @@ function moveParticule(p, config) {
   p.position.y = p.startPos.y + (p.endPos.y - p.startPos.y) * p.t
 }
 
-function drawParticules(config){
-  PARTICULES.forEach(function(p){
+function drawParticules(config) {
+  PARTICULES.forEach(function (p) {
     moveParticule(p, config)
     drawParticuleAt(p)
   })
@@ -279,22 +279,22 @@ function initParticules(config) {
   }
 }
 
-function generateColors(currentHex, mapping){
+function generateColors(currentHex, mapping) {
   // generate only the background color once
-  if(mapping[currentHex]){
+  if (mapping[currentHex]) {
     return mapping[currentHex]
   }
   colorA = "#1D1E28"
   colorB = "#1D1D1D"
 
-  color=colorA;
-  if(Math.random() > 0.8){
+  color = colorA;
+  if (Math.random() > 0.8) {
     color = colorB
   }
   mapping[currentHex] = color
 }
 
-function main(){
+function main() {
   const config = new Config()
   syncViewport(config)
   ensureGridCovers(config)
@@ -313,12 +313,12 @@ function main(){
 
 // Setting canvas.width/height resizes the bitmap *and* clears it, so we only
 // touch it on init and on resize — not every frame.
-function syncCanvas(config){
+function syncCanvas(config) {
   canvas.width = config.width
   canvas.height = config.height
 }
 
-function draw(cfg){
+function draw(cfg) {
   ctx.clearRect(0, 0, canvas.width, canvas.height)
   drawHexagonGrid()
   drawParticules(cfg)
