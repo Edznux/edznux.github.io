@@ -50,16 +50,21 @@ const fakeDataInput = {
 var switchCheckbox = document.getElementById("switch-bg");
 
 function Config(){
-  this.width =  window.innerWidth;
-  this.height =  window.innerHeight;
-  
   this.radius = 50;
   this.hexHeight = ((3/2)*this.radius)
   this.hexWidth = (Math.sqrt(3)*this.radius)
-  
-  this.xCount = Math.ceil(this.height / this.hexHeight)
-  this.yCount = Math.ceil(this.width / this.hexWidth)
-  this.stepSize = 1/600;
+
+  // viewport size, updated on resize
+  this.width = 0
+  this.height = 0
+  // current grid extent in hex units; only ever grows
+  this.cols = 0
+  this.rows = 0
+}
+
+function syncViewport(config){
+  config.width = window.innerWidth
+  config.height = window.innerHeight
 }
 
 const canvas = document.getElementById('lyfe-canvas');
@@ -71,27 +76,56 @@ const CAP_COLOR_PALETTE = {
   high: "#1b3153",
 }
 const THEME_COLOR =  "#78E2A0"
-var lastSize = 0;
 
-function drawHexagonGrid(config) {
-    // console.log(xCount, yCount)
-    const Hex = Honeycomb.defineHex({ dimensions: config.radius, origin: 'topLeft'})
-    grid = new Honeycomb.Grid(Hex, Honeycomb.rectangle({ width: config.yCount, height: config.xCount}))
+// Add new particules here. `hex` is the {col, row} of the hex whose top
+// vertex the particule starts on. `speed` is fraction of an edge per frame
+// (1/200 ≈ 200 frames per edge at 60fps ≈ ~3.3s per edge).
+const PARTICULE_CONFIGS = [
+  { name: "l", color: "white",       hex: { col: 2, row: 3 }, speed: 1/200 },
+  { name: "e", color: THEME_COLOR,   hex: { col: 4, row: 2 }, speed: 1/200 },
+]
 
-    // this adds more generated colors only when required:
-    // This is useful for changing windows size
-    // We don't really care about truncating the color palette when we size down.
-    if (Object.keys(COLOR_PALETTE).length < grid.size) {
-      // console.log(grid, COLOR_PALETTE)
-      grid.forEach(generateColorsFromEachHex);
-    }
-    // am I inverting the x and y coordinate system somewhere? :notlikethis:
-    var capKCell = {"x": config.width - config.hexWidth, "y": config.height - config.hexHeight, color: CAP_COLOR_PALETTE[fakeDataInput.capacity.k.status]}
-    var capPCell = {"x": config.width - (config.hexWidth*2) , "y": config.height - config.hexHeight, color: CAP_COLOR_PALETTE[fakeDataInput.capacity.p.status]}
-    var capSCell = {"x": config.width - (config.hexWidth*3) , "y": config.height - config.hexHeight, color: CAP_COLOR_PALETTE[fakeDataInput.capacity.s.status]}
-    drawUI(grid, capKCell, capPCell, capSCell)
+var grid;
+var PARTICULES = new Map();
+
+function createGrid(config) {
+  const Hex = Honeycomb.defineHex({ dimensions: config.radius, origin: 'topLeft' })
+  return new Honeycomb.Grid(Hex, Honeycomb.rectangle({ width: config.cols, height: config.rows }))
+}
+
+// Grow the grid (if needed) so it covers the current viewport. Hex (col,row)
+// positions never change, so existing palette colors and particule positions
+// stay valid; only newly added hexes get fresh colors.
+function ensureGridCovers(config) {
+  const wantCols = Math.ceil(config.width  / config.hexWidth)  + 1
+  const wantRows = Math.ceil(config.height / config.hexHeight) + 1
+  if (wantCols <= config.cols && wantRows <= config.rows) return
+  config.cols = Math.max(config.cols, wantCols)
+  config.rows = Math.max(config.rows, wantRows)
+  grid = createGrid(config)
+  grid.forEach(generateColorsFromEachHex)
+}
+
+function drawHexagonGrid() {
     grid.forEach(drawHex);
 }
+
+// Cap-status cells are pinned to the bottom-right of the *initial* viewport
+// and don't track resizes — that matches the "layout doesn't change" rule.
+function initCapCells(config) {
+  const y = config.height - config.hexHeight
+  const overrides = [
+    { x: config.width - config.hexWidth,     status: fakeDataInput.capacity.k.status },
+    { x: config.width - config.hexWidth * 2, status: fakeDataInput.capacity.p.status },
+    { x: config.width - config.hexWidth * 3, status: fakeDataInput.capacity.s.status },
+  ]
+  for (const o of overrides) {
+    const hex = grid.pointToHex({ x: o.x, y: y }, { allowOutside: true })
+    COLOR_PALETTE[hex] = CAP_COLOR_PALETTE[o.status]
+  }
+}
+
+const HEX_STROKE = "#000"
 
 function drawHex(hex){
   ctx.beginPath();
@@ -102,6 +136,7 @@ function drawHex(hex){
   ctx.closePath();
   ctx.fillStyle = getColorOfHex(hex)
   ctx.fill();
+  ctx.strokeStyle = HEX_STROKE
   ctx.stroke();
 }
 
@@ -119,107 +154,134 @@ function generateColorsFromEachHex(currentHex) {
 
 function drawParticuleAt(p){
   ctx.beginPath();
-  ctx.arc(p.position.x, p.position.y, 2, 0, Math.PI * 2, false);
+  ctx.arc(p.position.x, p.position.y, p.radius, 0, Math.PI * 2, false);
   ctx.strokeStyle = p.color;
   ctx.stroke();
   ctx.closePath();
 }
 
-var PARTICULES = new Map();
-function Position(){
-  this.x = 0
-  this.y = 0
-}
-
-function Particule () {
-  this.position = Position
-  this.radius = 2
-  this.color = "white"
-  this.isOnTop = false
-  this.stepInTransition = 0
-  this.nextMove = Direction.NONE
+// In a pointy-top honeycomb, every vertex is shared by 3 hexes and has
+// exactly 3 edges leaving it. Each vertex is one of two types based on
+// which way its Y-shape points:
+//   TOP    : single edge UP, two edges DOWN_LEFT / DOWN_RIGHT
+//   BOTTOM : single edge DOWN, two edges UP_LEFT / UP_RIGHT
+// Walking any allowed edge always lands on the opposite type.
+const VertexType = {
+  TOP: "top",
+  BOTTOM: "bottom",
 }
 
 const Direction = {
-  NONE: -1,
-  UP: 0,
-  DOWN: 1,
-  UP_LEFT: 2,
-  UP_RIGHT: 3,
-  DOWN_RIGHT: 4,
-  DOWN_LEFT: 5,
+  UP: "up",
+  DOWN: "down",
+  UP_LEFT: "upLeft",
+  UP_RIGHT: "upRight",
+  DOWN_LEFT: "downLeft",
+  DOWN_RIGHT: "downRight",
 }
 
-const ALLOWED_DIRECTIONS_FOR = {
-  // because we are using a pointy top hexagon grid there is only 2 position: on top or on bottom of the hexagon
-  // every other position is the top or bottom of one of its neighbors
-  BOTTOM: [Direction.DOWN, Direction.UP_LEFT, Direction.UP_RIGHT], 
-  TOP: [Direction.UP, Direction.DOWN_RIGHT, Direction.DOWN_LEFT],
+const ALLOWED_DIRECTIONS = {
+  [VertexType.TOP]:    [Direction.UP,   Direction.DOWN_LEFT, Direction.DOWN_RIGHT],
+  [VertexType.BOTTOM]: [Direction.DOWN, Direction.UP_LEFT,   Direction.UP_RIGHT],
 }
 
-function moveParticule(config, p){
-  moveSideX = config.hexWidth/2
-  moveSideY = (config.hexHeight/4) + 4
+function flipVertexType(t) {
+  return t === VertexType.TOP ? VertexType.BOTTOM : VertexType.TOP
+}
 
-  moveVerticalY = config.radius
+const SQRT3 = Math.sqrt(3)
 
-  p.stepInTransition++
-  
-  if(p.stepInTransition == 1/config.stepSize){
-    setRandomDirection(p)
-    p.stepInTransition = 0
-    // Any move will make the particule either be on top or on bottom of the hexagon
-    p.isOnTop = !p.isOnTop
-  }
-
-  switch(p.nextMove){
-    case Direction.UP:
-      p.position.x -= 0
-      p.position.y -= moveVerticalY*config.stepSize
-      break;
-    case Direction.DOWN:
-      p.position.y += 0
-      p.position.y += moveVerticalY*config.stepSize
-      break;
-    case Direction.UP_LEFT:
-      p.position.x -= moveSideX*config.stepSize
-      p.position.y -= moveSideY*config.stepSize
-      break;
-    case Direction.UP_RIGHT:
-      p.position.x += moveSideX*config.stepSize
-      p.position.y -= moveSideY*config.stepSize
-      break;
-    case Direction.DOWN_RIGHT:
-      p.position.x += moveSideX*config.stepSize
-      p.position.y += moveSideY*config.stepSize
-      break;
-    case Direction.DOWN_LEFT:
-      p.position.x -= moveSideX*config.stepSize
-      p.position.y += moveSideY*config.stepSize
-      break;
-    default:
-      console.log("no direction")
+// Edge vector for a hex of circumradius R. All hex edges have length R.
+// Diagonals split into (±R√3/2, ±R/2); verticals are (0, ±R).
+function edgeVector(direction, R) {
+  const sx = R * SQRT3 / 2
+  const sy = R / 2
+  switch (direction) {
+    case Direction.UP:         return { x:   0, y:  -R }
+    case Direction.DOWN:       return { x:   0, y:   R }
+    case Direction.UP_LEFT:    return { x: -sx, y: -sy }
+    case Direction.UP_RIGHT:   return { x:  sx, y: -sy }
+    case Direction.DOWN_LEFT:  return { x: -sx, y:  sy }
+    case Direction.DOWN_RIGHT: return { x:  sx, y:  sy }
   }
 }
 
-function possibleDirectionsFor(isOnTop){
-  if(isOnTop){
-    return ALLOWED_DIRECTIONS_FOR.TOP
+function makeParticule(name, color, x, y, vertexType, speed) {
+  return {
+    name: name,
+    color: color,
+    radius: 2,
+    speed: speed,
+    vertexType: vertexType,
+    startPos: { x: x, y: y },
+    endPos:   { x: x, y: y },
+    position: { x: x, y: y },
+    // start at end-of-edge so the very first move picks a fresh edge
+    t: 1,
   }
-  return ALLOWED_DIRECTIONS_FOR.BOTTOM
+}
+
+function isInBounds(point, config) {
+  return point.x >= 0 && point.x <= config.width
+      && point.y >= 0 && point.y <= config.height
+}
+
+function pickNextEdge(p, config) {
+  const allowed = ALLOWED_DIRECTIONS[p.vertexType].map(d => edgeVector(d, config.radius))
+  const inBounds = allowed.filter(v => isInBounds({ x: p.endPos.x + v.x, y: p.endPos.y + v.y }, config))
+  // If every move would leave the canvas (corner case), fall back to all
+  // allowed directions so the particule still moves rather than freezing.
+  const choices = inBounds.length > 0 ? inBounds : allowed
+
+  const v = choices[Math.floor(Math.random() * choices.length)]
+  p.startPos = { x: p.endPos.x, y: p.endPos.y }
+  p.endPos   = { x: p.startPos.x + v.x, y: p.startPos.y + v.y }
+  p.vertexType = flipVertexType(p.vertexType)
+  p.t = 0
+}
+
+function moveParticule(p, config) {
+  p.t += p.speed
+  if (p.t >= 1) {
+    p.t = 0
+    pickNextEdge(p, config)
+  }
+  p.position.x = p.startPos.x + (p.endPos.x - p.startPos.x) * p.t
+  p.position.y = p.startPos.y + (p.endPos.y - p.startPos.y) * p.t
 }
 
 function drawParticules(config){
-  PARTICULES.forEach(function(p, key, map){
-    moveParticule(config, p, p.nextMove)
+  PARTICULES.forEach(function(p){
+    moveParticule(p, config)
     drawParticuleAt(p)
   })
+}
+
+// The TOP vertex of a pointy-top hex is the corner with the smallest y.
+function topVertexOf(hex) {
+  let top = hex.corners[0]
+  for (let i = 1; i < hex.corners.length; i++) {
+    if (hex.corners[i].y < top.y) top = hex.corners[i]
+  }
+  return top
+}
+
+function initParticules(config) {
+  PARTICULES.clear()
+  for (const cfg of PARTICULE_CONFIGS) {
+    const hex = grid.getHex({ col: cfg.hex.col, row: cfg.hex.row })
+    if (!hex) {
+      console.warn("particule", cfg.name, "skipped: hex", cfg.hex, "not in grid")
+      continue
+    }
+    const v = topVertexOf(hex)
+    PARTICULES.set(cfg.name, makeParticule(cfg.name, cfg.color, v.x, v.y, VertexType.TOP, cfg.speed))
+  }
 }
 
 function generateColors(currentHex, mapping){
   // generate only the background color once
   if(mapping[currentHex]){
-    console.log("already generated color for", currentHex)
     return mapping[currentHex]
   }
   colorA = "#1D1E28"
@@ -232,110 +294,37 @@ function generateColors(currentHex, mapping){
   mapping[currentHex] = color
 }
 
-//https://stackoverflow.com/questions/2450954/how-to-randomize-shuffle-a-javascript-array#2450976
-function shuffle(array) {
-  let currentIndex = array.length,  randomIndex;
-  // While there remain elements to shuffle.
-  while (currentIndex > 0) {
-    // Pick a remaining element.
-    randomIndex = Math.floor(Math.random() * currentIndex);
-    currentIndex--;
-    // And swap it with the current element.
-    [array[currentIndex], array[randomIndex]] = [
-      array[randomIndex], array[currentIndex]];
-  }
-  return array;
-}
-
-function getPreferedDirection(x, y, listOfPossibleMoves){
-  // if the particule is on top of the hexagon, it will prefer to go down
-  // if the particule is on the bottom of the hexagon, it will prefer to go up
-  preferedMoves = []
-  for (let i = 0; i < listOfPossibleMoves.length; i++) {
-    const move = listOfPossibleMoves[i];
-    if(move == Direction.UP && y < 50){
-      continue
-    }
-    if((move == Direction.UP_LEFT || move == Direction.DOWN_LEFT ) && x < 50){
-      continue
-    }
-    if((move == Direction.UP_LEFT || move == Direction.DOWN_LEFT ) && x < 50){
-      continue
-    }
-    preferedMoves.push(move)
-  }
-  return preferedMoves;
-}
-
-function setRandomDirection(p){
-  possibleMoves = possibleDirectionsFor(p.isOnTop)
-  preferedMove = getPreferedDirection(p.position.x, p.position.y, possibleMoves)
-  console.log(preferedMove)
-  p.nextMove = preferedMove[Math.floor(Math.random()*preferedMove.length)];
-}
-
-
 function main(){
-  config = new Config()
+  const config = new Config()
+  syncViewport(config)
+  ensureGridCovers(config)
+  syncCanvas(config)
+  initCapCells(config)
+  initParticules(config)
 
-  pl = new Particule()
-  plPos = new Position()
-  plPos.x = config.hexWidth*2
-  plPos.y = config.hexHeight*3
-  pl.position = plPos
-  pl.color = "white"
-  pl.isOnTop = true
-  PARTICULES.set("l", pl)
+  window.addEventListener('resize', () => {
+    syncViewport(config)
+    ensureGridCovers(config)
+    syncCanvas(config)
+  })
 
-  pe = new Particule()
-  pePos = new Position()
-  pePos.x = (config.hexWidth/2)*7
-  pePos.y = (config.hexHeight)*2
-  pe.position = pePos
-  pe.isOnTop = true
-  pe.color = THEME_COLOR
+  window.requestAnimationFrame(() => draw(config))
+}
 
-  setRandomDirection(pe)
-  setRandomDirection(pl)
-  
-  PARTICULES.set("e", pe)
-  console.log(PARTICULES)
-  window.requestAnimationFrame(function() {
-    draw(config)
-  });
+// Setting canvas.width/height resizes the bitmap *and* clears it, so we only
+// touch it on init and on resize — not every frame.
+function syncCanvas(config){
+  canvas.width = config.width
+  canvas.height = config.height
 }
 
 function draw(cfg){
-  canvas.width = cfg.width;
-  canvas.height = cfg.height;
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-  drawHexagonGrid(cfg);
-  window.requestAnimationFrame(function(){
-    draw(cfg)
-    drawParticules(cfg)
-  });
+  ctx.clearRect(0, 0, canvas.width, canvas.height)
+  drawHexagonGrid()
+  drawParticules(cfg)
+  window.requestAnimationFrame(() => draw(cfg))
 }
 
-function drawUI(grid, capKCell, capPCell, capSCell){
-  const capKCellHex = grid.pointToHex(
-    { x: capKCell.x, y: capKCell.y },
-    { allowOutside: true }
-  );
-  const capPCellHex = grid.pointToHex(
-    { x: capPCell.x, y: capPCell.y },
-    { allowOutside: true }
-  );
-  const capSCellHex = grid.pointToHex(
-    { x: capSCell.x, y: capSCell.y },
-    { allowOutside: true }
-  );
-
-  COLOR_PALETTE[capKCellHex] = capKCell.color
-  COLOR_PALETTE[capPCellHex] = capPCell.color
-  COLOR_PALETTE[capSCellHex] = capSCell.color
-}
- 
 main()
 
 document.addEventListener('click', (e) => {
@@ -348,7 +337,7 @@ document.addEventListener('click', (e) => {
 })
 
 
-// This enables the "visualisation mode" where the content is hidden but some 
+// This enables the "visualisation mode" where the content is hidden but some
 // simulation operations are shown and explained
 switchCheckbox.addEventListener("click", (e) => {
   console.log(e.target.checked)
