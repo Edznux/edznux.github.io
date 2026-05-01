@@ -110,18 +110,76 @@ function drawHexagonGrid() {
   grid.forEach(drawHex);
 }
 
-// Cap-status cells are pinned to the bottom-right of the *initial* viewport
-// and don't track resizes — that matches the "layout doesn't change" rule.
-function initCapCells(config) {
-  const y = config.height - config.hexHeight
-  const overrides = [
-    { x: config.width - config.hexWidth, status: fakeDataInput.capacity.k.status },
-    { x: config.width - config.hexWidth * 2, status: fakeDataInput.capacity.p.status },
-    { x: config.width - config.hexWidth * 3, status: fakeDataInput.capacity.s.status },
-  ]
-  for (const o of overrides) {
-    const hex = grid.pointToHex({ x: o.x, y: y }, { allowOutside: true })
-    COLOR_PALETTE[hex] = CAP_COLOR_PALETTE[o.status]
+// Hexes currently colored as cap cells, paired with the color they had before
+// we overwrote them. On resize we restore these so old cap-cell positions
+// blend back into the background instead of leaving a stale colored hex.
+var CAP_CELL_BACKUPS = []
+
+// Pick anchor points (in viewport pixels) for the 3 cap cells. The .container
+// element is opaque and covers the canvas behind it, so we anchor to the
+// right gutter (viewport right edge minus container right edge) rather than
+// the viewport. Layout downgrades row → triangle → vertical as the gutter
+// shrinks; if not even one column of hexes fits, render nothing rather than
+// hiding cells under the content card.
+function capCellAnchors(config) {
+  const w = config.width
+  const h = config.height
+  const hw = config.hexWidth
+  const hh = config.hexHeight
+  const statuses = fakeDataInput.capacity
+
+  const container = document.querySelector('.container')
+  const containerRight = container ? container.getBoundingClientRect().right : 0
+  const gutter = w - containerRight
+
+  // One row of background sits below the cap cells.
+  const yBottom = h - hh * 1.5
+
+  // Row: 3 hexes side by side need 3 hexWidths of gutter.
+  if (gutter >= hw * 3 && h >= hh * 2.5) {
+    return [
+      { x: w - hw * 0.5, y: yBottom, status: statuses.k.status },
+      { x: w - hw * 1.5, y: yBottom, status: statuses.p.status },
+      { x: w - hw * 2.5, y: yBottom, status: statuses.s.status },
+    ]
+  }
+
+  // Triangle: 2 bottom + 1 top, footprint is 2 hexWidths wide.
+  if (gutter >= hw * 2 && h >= hh * 3.5) {
+    const yTop = yBottom - hh
+    return [
+      { x: w - hw * 0.5, y: yBottom, status: statuses.k.status },
+      { x: w - hw * 1.5, y: yBottom, status: statuses.p.status },
+      { x: w - hw * 1.0, y: yTop, status: statuses.s.status },
+    ]
+  }
+
+  // Vertical: 1 hexWidth column hugging the right edge. Pointy-top rows
+  // alternate horizontal alignment by hw/2, so to land in the *same* column
+  // each step needs to skip a row — vertical spacing is 2*hh, not hh.
+  if (gutter >= hw && h >= hh * 5.5) {
+    const x = w - hw * 0.5
+    return [
+      { x: x, y: yBottom, status: statuses.k.status },
+      { x: x, y: yBottom - hh * 2, status: statuses.p.status },
+      { x: x, y: yBottom - hh * 4, status: statuses.s.status },
+    ]
+  }
+
+  // No visible room — skip rendering rather than draw under the content card.
+  return []
+}
+
+function applyCapCells(config) {
+  for (const b of CAP_CELL_BACKUPS) {
+    COLOR_PALETTE[b.hex] = b.color
+  }
+  CAP_CELL_BACKUPS = []
+
+  for (const a of capCellAnchors(config)) {
+    const hex = grid.pointToHex({ x: a.x, y: a.y }, { allowOutside: true })
+    CAP_CELL_BACKUPS.push({ hex: hex, color: COLOR_PALETTE[hex] })
+    COLOR_PALETTE[hex] = CAP_COLOR_PALETTE[a.status]
   }
 }
 
@@ -299,13 +357,14 @@ function main() {
   syncViewport(config)
   ensureGridCovers(config)
   syncCanvas(config)
-  initCapCells(config)
+  applyCapCells(config)
   initParticules(config)
 
   window.addEventListener('resize', () => {
     syncViewport(config)
     ensureGridCovers(config)
     syncCanvas(config)
+    applyCapCells(config)
   })
 
   window.requestAnimationFrame(() => draw(config))
