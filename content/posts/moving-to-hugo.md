@@ -1,6 +1,7 @@
 ---
 title: "Moving to Hugo"
 date: 2021-05-30T15:31:49+02:00
+draft: true
 ---
 
 I just had enough of the dependabot notifications for such a simple website.
