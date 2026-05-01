@@ -77,16 +77,25 @@ const CAP_COLOR_PALETTE = {
 }
 const THEME_COLOR = "#78E2A0"
 
-// Add new particules here. `hex` is the {col, row} of the hex whose top
-// vertex the particule starts on. `speed` is fraction of an edge per frame
-// (1/200 ≈ 200 frames per edge at 60fps ≈ ~3.3s per edge).
+// Add new particules here. The spawn hex is picked dynamically: `offsetCols`
+// is the number of hex columns past the container's right edge, and `row` is
+// the hex row from the top of the viewport. This keeps particules visible in
+// the gutter regardless of viewport width. `speed` is fraction of an edge per
+// frame (1/200 ≈ 200 frames per edge at 60fps ≈ ~3.3s per edge).
 const PARTICULE_CONFIGS = [
-  { name: "l", color: "white", hex: { col: 2, row: 3 }, speed: 1 / 400 },
-  { name: "e", color: THEME_COLOR, hex: { col: 4, row: 2 }, speed: 1 / 400 },
+  { name: "l", color: "white", offsetCols: 1, row: 3, speed: 1 / 400 },
+  { name: "e", color: THEME_COLOR, offsetCols: 2, row: 2, speed: 1 / 400 },
 ]
 
 var grid;
 var PARTICULES = new Map();
+
+// Hidden debug panel state. Toggled via Shift+D — see initDebug().
+const debug = {
+  visible: false,
+  showValidPaths: false,
+  speedMultiplier: 1,
+}
 
 function createGrid(config) {
   const Hex = Honeycomb.defineHex({ dimensions: config.radius, origin: 'topLeft' })
@@ -279,9 +288,22 @@ function makeParticule(name, color, x, y, vertexType, speed) {
   }
 }
 
+// The .container is opaque and sits in front of the canvas, so a particule
+// inside its rect is hidden. Treat the container as out-of-bounds so particules
+// stay in the visible area. Read live each call: when Sim Viz hides the
+// content the container shrinks, freeing that space for particules naturally.
+function getContainerRect() {
+  const c = document.querySelector('.container')
+  return c ? c.getBoundingClientRect() : null
+}
+
 function isInBounds(point, config) {
-  return point.x >= 0 && point.x <= config.width
-    && point.y >= 0 && point.y <= config.height
+  if (point.x < 0 || point.x > config.width) return false
+  if (point.y < 0 || point.y > config.height) return false
+  const r = getContainerRect()
+  if (r && point.x > r.left && point.x < r.right
+        && point.y > r.top && point.y < r.bottom) return false
+  return true
 }
 
 function pickNextEdge(p, config) {
@@ -299,7 +321,7 @@ function pickNextEdge(p, config) {
 }
 
 function moveParticule(p, config) {
-  p.t += p.speed
+  p.t += p.speed * debug.speedMultiplier
   if (p.t >= 1) {
     p.t = 0
     pickNextEdge(p, config)
@@ -326,10 +348,14 @@ function topVertexOf(hex) {
 
 function initParticules(config) {
   PARTICULES.clear()
+  const r = getContainerRect()
+  const baseX = r ? r.right : 0
   for (const cfg of PARTICULE_CONFIGS) {
-    const hex = grid.getHex({ col: cfg.hex.col, row: cfg.hex.row })
+    const x = baseX + cfg.offsetCols * config.hexWidth
+    const y = cfg.row * config.hexHeight
+    const hex = grid.pointToHex({ x, y }, { allowOutside: true })
     if (!hex) {
-      console.warn("particule", cfg.name, "skipped: hex", cfg.hex, "not in grid")
+      console.warn("particule", cfg.name, "skipped: no hex at", { x, y })
       continue
     }
     const v = topVertexOf(hex)
@@ -359,6 +385,7 @@ function main() {
   syncCanvas(config)
   applyCapCells(config)
   initParticules(config)
+  initDebug(config)
 
   window.addEventListener('resize', () => {
     syncViewport(config)
@@ -377,11 +404,174 @@ function syncCanvas(config) {
   canvas.height = config.height
 }
 
+function drawDebugOverlay(config) {
+  if (!debug.showValidPaths) return
+
+  const r = getContainerRect()
+  if (r) {
+    ctx.save()
+    ctx.strokeStyle = "#E2787A"
+    ctx.setLineDash([6, 4])
+    ctx.lineWidth = 2
+    ctx.strokeRect(r.left, r.top, r.width, r.height)
+    ctx.restore()
+  }
+
+  PARTICULES.forEach(p => {
+    const allowed = ALLOWED_DIRECTIONS[p.vertexType].map(d => edgeVector(d, config.radius))
+    for (const v of allowed) {
+      const dst = { x: p.endPos.x + v.x, y: p.endPos.y + v.y }
+      const ok = isInBounds(dst, config)
+      const color = ok ? "#78E2A0" : "#E2787A"
+      ctx.save()
+      ctx.beginPath()
+      ctx.moveTo(p.endPos.x, p.endPos.y)
+      ctx.lineTo(dst.x, dst.y)
+      ctx.strokeStyle = color
+      ctx.lineWidth = 2
+      if (!ok) ctx.setLineDash([4, 4])
+      ctx.stroke()
+      ctx.beginPath()
+      ctx.arc(dst.x, dst.y, 4, 0, Math.PI * 2)
+      ctx.fillStyle = color
+      ctx.fill()
+      ctx.restore()
+    }
+  })
+}
+
 function draw(cfg) {
   ctx.clearRect(0, 0, canvas.width, canvas.height)
   drawHexagonGrid()
   drawParticules(cfg)
+  drawDebugOverlay(cfg)
   window.requestAnimationFrame(() => draw(cfg))
+}
+
+// Hidden debug panel: Shift+D toggles a small control surface to tweak
+// particule speed, toggle the path-validity overlay, change colors, and
+// add/remove particules at runtime. Not part of the public UI.
+function initDebug(config) {
+  const panel = document.createElement('div')
+  panel.id = 'debug-panel'
+  panel.innerHTML = `
+    <style>
+      #debug-panel {
+        position: fixed; top: 16px; right: 16px; z-index: 9999;
+        background: #1d1e28; color: #d8dee9; border: 1px solid #78E2A0;
+        padding: 12px; font-family: monospace; font-size: 12px;
+        width: 280px; max-height: 80vh; overflow-y: auto;
+        box-shadow: 4px 4px 0 rgba(0,0,0,0.5);
+      }
+      #debug-panel.hidden { display: none; }
+      #debug-panel h3 { margin: 0 0 8px 0; font-size: 13px; color: #78E2A0; }
+      #debug-panel label { display: flex; justify-content: space-between; gap: 8px; align-items: center; margin: 6px 0; }
+      #debug-panel .row { display: flex; gap: 6px; align-items: center; margin: 4px 0; padding: 4px 0; border-top: 1px dashed #555; }
+      #debug-panel input[type="range"] { flex: 1; }
+      #debug-panel input[type="color"] { width: 28px; height: 22px; padding: 0; border: 0; background: transparent; }
+      #debug-panel input[type="number"] { width: 72px; background: #111; color: #d8dee9; border: 1px solid #444; padding: 2px 4px; }
+      #debug-panel button { background: #2a2b35; color: #d8dee9; border: 1px solid #78E2A0; padding: 4px 8px; cursor: pointer; font-family: inherit; font-size: 11px; }
+      #debug-panel button:hover { background: #78E2A0; color: #1d1e28; }
+      #debug-panel .name { font-weight: bold; min-width: 24px; text-align: center; }
+      #debug-panel .hint { opacity: .6; margin-top: 10px; font-size: 11px; }
+    </style>
+    <h3>Debug — particules</h3>
+    <label>
+      <span>Speed × <span id="dbg-speed-val">1.00</span></span>
+      <input id="dbg-speed" type="range" min="0" max="100" step="0.1" value="1" />
+    </label>
+    <label>
+      <span>Show valid paths</span>
+      <input id="dbg-paths" type="checkbox" />
+    </label>
+    <div id="dbg-particles"></div>
+    <button id="dbg-add">+ Add particule</button>
+    <p class="hint">Toggle: Shift+D</p>
+  `
+  panel.classList.add('hidden')
+  document.body.appendChild(panel)
+
+  const speedEl = panel.querySelector('#dbg-speed')
+  const speedVal = panel.querySelector('#dbg-speed-val')
+  speedEl.addEventListener('input', e => {
+    debug.speedMultiplier = parseFloat(e.target.value)
+    speedVal.textContent = debug.speedMultiplier.toFixed(2)
+  })
+  panel.querySelector('#dbg-paths').addEventListener('change', e => {
+    debug.showValidPaths = e.target.checked
+  })
+  panel.querySelector('#dbg-add').addEventListener('click', () => {
+    addParticuleAtDefault(config)
+    renderParticulesList()
+  })
+
+  renderParticulesList()
+
+  window.addEventListener('keydown', e => {
+    if (!e.shiftKey || (e.key !== 'D' && e.key !== 'd')) return
+    const t = e.target
+    const tag = (t && t.tagName || '').toUpperCase()
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || (t && t.isContentEditable)) return
+    e.preventDefault()
+    debug.visible = !debug.visible
+    panel.classList.toggle('hidden', !debug.visible)
+    if (debug.visible) renderParticulesList()
+  })
+}
+
+function renderParticulesList() {
+  const list = document.querySelector('#dbg-particles')
+  if (!list) return
+  list.innerHTML = ''
+  PARTICULES.forEach((p, name) => {
+    const row = document.createElement('div')
+    row.className = 'row'
+    row.innerHTML = `
+      <span class="name">${name}</span>
+      <input type="color" data-action="color" />
+      <input type="number" min="0.0001" max="0.05" step="0.0001" data-action="speed" />
+      <button data-action="remove" title="remove">×</button>
+    `
+    const colorEl = row.querySelector('[data-action=color]')
+    colorEl.value = toHexColor(p.color)
+    colorEl.addEventListener('input', e => { p.color = e.target.value })
+
+    const speedEl = row.querySelector('[data-action=speed]')
+    speedEl.value = p.speed.toFixed(4)
+    speedEl.addEventListener('input', e => {
+      const v = parseFloat(e.target.value)
+      if (!isNaN(v) && v > 0) p.speed = v
+    })
+
+    row.querySelector('[data-action=remove]').addEventListener('click', () => {
+      PARTICULES.delete(name)
+      renderParticulesList()
+    })
+    list.appendChild(row)
+  })
+}
+
+// <input type="color"> only accepts #rrggbb. Round-trip through canvas to
+// normalize named/short-hex colors.
+function toHexColor(c) {
+  const probe = document.createElement('canvas').getContext('2d')
+  probe.fillStyle = "#000"
+  probe.fillStyle = c
+  return probe.fillStyle
+}
+
+function addParticuleAtDefault(config) {
+  const r = getContainerRect()
+  const baseX = r ? r.right : 0
+  const x = baseX + config.hexWidth * (1 + Math.floor(Math.random() * 3))
+  const y = config.hexHeight * (1 + Math.floor(Math.random() * 6))
+  const hex = grid.pointToHex({ x, y }, { allowOutside: true })
+  if (!hex) return
+  const v = topVertexOf(hex)
+  let name = 'p' + Math.random().toString(36).slice(2, 5)
+  while (PARTICULES.has(name)) name = 'p' + Math.random().toString(36).slice(2, 5)
+  const color = '#' + Math.floor(Math.random() * 0xffffff).toString(16).padStart(6, '0')
+  PARTICULES.set(name, makeParticule(name, color, v.x, v.y, VertexType.TOP, 1 / 400))
 }
 
 main()
