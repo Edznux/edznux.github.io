@@ -311,13 +311,24 @@ mark {
   padding: 40px;
   max-width: 864px;
   // min-height: 100vh; // needed to remove this for the hidding button
+  // Leave a band of hex grid above the container so background particules
+  // can pathfind from one gutter to the other over the top. ~1 hex row of
+  // clearance (hex height = 75px at radius 50).
+  margin-top: 75px;
   border-right: 1px solid rgba(255, 255, 255, 0.1);
   box-shadow: 10px 10px 0px $shadow-color;
+
+  @media ($phone) {
+    margin-top: 0;
+  }
 
   &.full,
   &.center {
     border: none;
-    margin: 24px auto;
+    // Top margin opens a band of hex grid above the card so background
+    // particules can pathfind from one gutter to the other over the top.
+    // ~1 hex row of clearance (hex height = 75px at radius 50).
+    margin: 75px auto 24px;
     @media ($phone) {
       margin: 0px auto;
     }

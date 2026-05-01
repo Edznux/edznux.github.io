@@ -94,6 +94,7 @@ var PARTICULES = new Map();
 const debug = {
   visible: false,
   showValidPaths: false,
+  showPlannedPaths: false,
   speedMultiplier: 1,
 }
 
@@ -283,8 +284,10 @@ function makeParticule(name, color, x, y, vertexType, speed) {
     startPos: { x: x, y: y },
     endPos: { x: x, y: y },
     position: { x: x, y: y },
-    // start at end-of-edge so the very first move picks a fresh edge
+    // start at end-of-edge so the very first move plans a fresh path
     t: 1,
+    // queue of remaining vertices to walk through (popped front-first)
+    path: [],
   }
 }
 
@@ -306,25 +309,132 @@ function isInBounds(point, config) {
   return true
 }
 
-function pickNextEdge(p, config) {
-  const allowed = ALLOWED_DIRECTIONS[p.vertexType].map(d => edgeVector(d, config.radius))
-  const inBounds = allowed.filter(v => isInBounds({ x: p.endPos.x + v.x, y: p.endPos.y + v.y }, config))
-  // If every move would leave the canvas (corner case), fall back to all
-  // allowed directions so the particule still moves rather than freezing.
-  const choices = inBounds.length > 0 ? inBounds : allowed
+// Vertex coordinates land on a deterministic lattice, so rounding gives a
+// stable hash key for visited-set / open-set bookkeeping in pathfinding.
+function vertexKey(x, y) {
+  return Math.round(x) + ',' + Math.round(y)
+}
 
-  const v = choices[Math.floor(Math.random() * choices.length)]
-  p.startPos = { x: p.endPos.x, y: p.endPos.y }
-  p.endPos = { x: p.startPos.x + v.x, y: p.startPos.y + v.y }
-  p.vertexType = flipVertexType(p.vertexType)
-  p.t = 0
+function neighborsOf(v, type, R) {
+  const out = []
+  for (const d of ALLOWED_DIRECTIONS[type]) {
+    const e = edgeVector(d, R)
+    out.push({ x: v.x + e.x, y: v.y + e.y })
+  }
+  return out
+}
+
+// Pick an in-bounds hex corner, preferring one well away from where the
+// particule is now so each journey lasts a while. Sampling pixels (rather
+// than hex coords) keeps destinations distributed across the visible
+// gutter even when the container takes up most of the viewport.
+function pickRandomDestination(p, config) {
+  const minDist = config.radius * 6
+  let fallback = null
+  for (let i = 0; i < 80; i++) {
+    const x = Math.random() * config.width
+    const y = Math.random() * config.height
+    if (!isInBounds({ x, y }, config)) continue
+    const hex = grid.pointToHex({ x, y }, { allowOutside: true })
+    if (!hex) continue
+    const corner = hex.corners[Math.floor(Math.random() * 6)]
+    if (!isInBounds(corner, config)) continue
+    const dx = corner.x - p.endPos.x, dy = corner.y - p.endPos.y
+    if (dx * dx + dy * dy >= minDist * minDist) {
+      return { x: corner.x, y: corner.y }
+    }
+    fallback = { x: corner.x, y: corner.y }
+  }
+  return fallback
+}
+
+// A* over the hex-vertex graph. Each step walks one hex edge (cost 1);
+// the heuristic is the straight-line distance scaled by edge length, which
+// is admissible because no single edge can shrink the gap by more than R.
+// Pathfinding runs once per journey (~10s at default speed), so the
+// sorted-array priority queue is plenty fast.
+function findPath(startPos, startType, goalPos, config) {
+  const goalKey = vertexKey(goalPos.x, goalPos.y)
+  const startKey = vertexKey(startPos.x, startPos.y)
+  if (startKey === goalKey) return []
+  const visited = new Set()
+  const open = [{
+    key: startKey, pos: startPos, type: startType, g: 0,
+    f: Math.hypot(startPos.x - goalPos.x, startPos.y - goalPos.y) / config.radius,
+    parent: null,
+  }]
+  while (open.length > 0) {
+    open.sort((a, b) => a.f - b.f)
+    const cur = open.shift()
+    if (visited.has(cur.key)) continue
+    visited.add(cur.key)
+    if (cur.key === goalKey) {
+      const path = []
+      let n = cur
+      while (n.parent) {
+        path.unshift({ x: n.pos.x, y: n.pos.y })
+        n = n.parent
+      }
+      return path
+    }
+    for (const np of neighborsOf(cur.pos, cur.type, config.radius)) {
+      if (!isInBounds(np, config)) continue
+      const k = vertexKey(np.x, np.y)
+      if (visited.has(k)) continue
+      const g = cur.g + 1
+      open.push({
+        key: k, pos: np, type: flipVertexType(cur.type), g,
+        f: g + Math.hypot(np.x - goalPos.x, np.y - goalPos.y) / config.radius,
+        parent: cur,
+      })
+    }
+  }
+  return null
+}
+
+function planPath(p, config) {
+  for (let i = 0; i < 5; i++) {
+    const dest = pickRandomDestination(p, config)
+    if (!dest) return
+    const path = findPath(p.endPos, p.vertexType, dest, config)
+    if (path && path.length > 0) {
+      p.path = path
+      return
+    }
+  }
+}
+
+function advanceToNextEdge(p, config) {
+  if (p.path.length === 0) planPath(p, config)
+  while (p.path.length > 0) {
+    const next = p.path.shift()
+    // Container may have moved (resize / sim-viz toggle) and pushed part
+    // of the path through the content area. Drop the stale path and replan.
+    if (!isInBounds(next, config)) {
+      p.path = []
+      planPath(p, config)
+      continue
+    }
+    p.startPos = { x: p.endPos.x, y: p.endPos.y }
+    p.endPos = next
+    p.vertexType = flipVertexType(p.vertexType)
+    return true
+  }
+  return false
 }
 
 function moveParticule(p, config) {
   p.t += p.speed * debug.speedMultiplier
-  if (p.t >= 1) {
-    p.t = 0
-    pickNextEdge(p, config)
+  while (p.t >= 1) {
+    if (!advanceToNextEdge(p, config)) {
+      // No reachable destination this frame; pin to the current vertex
+      // and try again on the next tick.
+      p.t = 0
+      p.position.x = p.endPos.x
+      p.position.y = p.endPos.y
+      return
+    }
+    p.t -= 1
   }
   p.position.x = p.startPos.x + (p.endPos.x - p.startPos.x) * p.t
   p.position.y = p.startPos.y + (p.endPos.y - p.startPos.y) * p.t
@@ -405,39 +515,64 @@ function syncCanvas(config) {
 }
 
 function drawDebugOverlay(config) {
-  if (!debug.showValidPaths) return
+  if (!debug.showValidPaths && !debug.showPlannedPaths) return
 
-  const r = getContainerRect()
-  if (r) {
-    ctx.save()
-    ctx.strokeStyle = "#E2787A"
-    ctx.setLineDash([6, 4])
-    ctx.lineWidth = 2
-    ctx.strokeRect(r.left, r.top, r.width, r.height)
-    ctx.restore()
-  }
-
-  PARTICULES.forEach(p => {
-    const allowed = ALLOWED_DIRECTIONS[p.vertexType].map(d => edgeVector(d, config.radius))
-    for (const v of allowed) {
-      const dst = { x: p.endPos.x + v.x, y: p.endPos.y + v.y }
-      const ok = isInBounds(dst, config)
-      const color = ok ? "#78E2A0" : "#E2787A"
+  if (debug.showValidPaths) {
+    const r = getContainerRect()
+    if (r) {
       ctx.save()
-      ctx.beginPath()
-      ctx.moveTo(p.endPos.x, p.endPos.y)
-      ctx.lineTo(dst.x, dst.y)
-      ctx.strokeStyle = color
+      ctx.strokeStyle = "#E2787A"
+      ctx.setLineDash([6, 4])
       ctx.lineWidth = 2
-      if (!ok) ctx.setLineDash([4, 4])
-      ctx.stroke()
-      ctx.beginPath()
-      ctx.arc(dst.x, dst.y, 4, 0, Math.PI * 2)
-      ctx.fillStyle = color
-      ctx.fill()
+      ctx.strokeRect(r.left, r.top, r.width, r.height)
       ctx.restore()
     }
-  })
+
+    PARTICULES.forEach(p => {
+      const allowed = ALLOWED_DIRECTIONS[p.vertexType].map(d => edgeVector(d, config.radius))
+      for (const v of allowed) {
+        const dst = { x: p.endPos.x + v.x, y: p.endPos.y + v.y }
+        const ok = isInBounds(dst, config)
+        const color = ok ? "#78E2A0" : "#E2787A"
+        ctx.save()
+        ctx.beginPath()
+        ctx.moveTo(p.endPos.x, p.endPos.y)
+        ctx.lineTo(dst.x, dst.y)
+        ctx.strokeStyle = color
+        ctx.lineWidth = 2
+        if (!ok) ctx.setLineDash([4, 4])
+        ctx.stroke()
+        ctx.beginPath()
+        ctx.arc(dst.x, dst.y, 4, 0, Math.PI * 2)
+        ctx.fillStyle = color
+        ctx.fill()
+        ctx.restore()
+      }
+    })
+  }
+
+  if (debug.showPlannedPaths) {
+    PARTICULES.forEach(p => {
+      if (p.path.length === 0) return
+      ctx.save()
+      ctx.strokeStyle = p.color
+      ctx.globalAlpha = 0.5
+      ctx.lineWidth = 1.5
+      ctx.setLineDash([4, 3])
+      ctx.beginPath()
+      ctx.moveTo(p.endPos.x, p.endPos.y)
+      for (const v of p.path) ctx.lineTo(v.x, v.y)
+      ctx.stroke()
+      ctx.setLineDash([])
+      // Mark the final destination so it's easy to spot.
+      const goal = p.path[p.path.length - 1]
+      ctx.beginPath()
+      ctx.arc(goal.x, goal.y, 5, 0, Math.PI * 2)
+      ctx.fillStyle = p.color
+      ctx.fill()
+      ctx.restore()
+    })
+  }
 }
 
 function draw(cfg) {
@@ -484,6 +619,10 @@ function initDebug(config) {
       <span>Show valid paths</span>
       <input id="dbg-paths" type="checkbox" />
     </label>
+    <label>
+      <span>Show planned paths</span>
+      <input id="dbg-planned" type="checkbox" />
+    </label>
     <div id="dbg-particles"></div>
     <button id="dbg-add">+ Add particule</button>
     <p class="hint">Toggle: Shift+D</p>
@@ -499,6 +638,9 @@ function initDebug(config) {
   })
   panel.querySelector('#dbg-paths').addEventListener('change', e => {
     debug.showValidPaths = e.target.checked
+  })
+  panel.querySelector('#dbg-planned').addEventListener('change', e => {
+    debug.showPlannedPaths = e.target.checked
   })
   panel.querySelector('#dbg-add').addEventListener('click', () => {
     addParticuleAtDefault(config)
