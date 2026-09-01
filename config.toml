@@ -21,6 +21,12 @@ identifier = "posts"
 url = "/posts/"
 
 [[menu.main]]
+name = "Map"
+weight = 250
+identifier = "map"
+url = "/map/"
+
+[[menu.main]]
 name = "About"
 weight = 300
 identifier = "about"

@@ -1,0 +1,18 @@
+{{ define "main" }}
+<article class="post atlas-page">
+  <h1 class="post-title">{{ .Title | markdownify }}</h1>
+  <div class="post-content">
+    {{ .Content }}
+  </div>
+
+  <div id="atlas" class="atlas" aria-label="ASCII map of Europe with my bikepacking routes">
+    <div class="atlas-map" id="atlas-map"></div>
+    <div class="atlas-status" id="atlas-status">&gt; loading map…</div>
+    <div class="atlas-trips" id="atlas-trips"></div>
+  </div>
+</article>
+
+<link rel="stylesheet" href="{{ "css/atlas.css" | relURL }}">
+<script src="{{ "data/atlas-data.js" | relURL }}"></script>
+<script src="{{ "js/atlas.js" | relURL }}" defer></script>
+{{ end }}

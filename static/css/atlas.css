@@ -1,0 +1,113 @@
+/* ASCII bikepacking atlas (/map/). Colors follow the green theme:
+   dark greys for land, accent green (#78E2A0) for the ridden line. */
+
+.container:has(.atlas) {
+  max-width: 1400px;
+}
+
+.atlas {
+  --atlas-fs: 10px;
+  --atlas-sea: transparent;
+  --atlas-grat: #2a2d36;
+  --atlas-land: #3b3f49;
+  --atlas-border: #4a4f5a;
+  --atlas-coast: #8a8f9a;
+  --atlas-frame: #5a5f6a;
+  --atlas-label: #b4b8c2;
+  --atlas-city: #6a6f7a;
+  --atlas-route: #78e2a0;
+  --atlas-route-dim: #3f8a5c;
+  --atlas-hi: #ffffff;
+  margin: 10px 0 30px;
+  font-family: 'Fira Code', Monaco, Consolas, Ubuntu Mono, monospace;
+  /* ligatures would merge `--`, `->`, `|-`… and wreck the grid */
+  font-variant-ligatures: none !important;
+  font-feature-settings: normal !important;
+  letter-spacing: 0;
+}
+
+.atlas-map {
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+  font-size: var(--atlas-fs);
+  line-height: 1;
+  cursor: crosshair;
+  user-select: none;
+}
+
+.atlas-map pre {
+  position: absolute;
+  top: 0;
+  left: 0;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  background: transparent !important;
+  font-size: inherit !important;
+  font-family: inherit;
+  line-height: inherit;
+  letter-spacing: 0;
+  white-space: pre;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.atlas-map pre:first-child {
+  position: relative;
+}
+
+.atlas-map .l-grat   { color: var(--atlas-grat); }
+.atlas-map .l-land   { color: var(--atlas-land); }
+.atlas-map .l-border { color: var(--atlas-border); }
+.atlas-map .l-coast  { color: var(--atlas-coast); }
+.atlas-map .l-frame  { color: var(--atlas-frame); }
+.atlas-map .l-city   { color: var(--atlas-city); }
+.atlas-map .l-route  { color: var(--atlas-route); text-shadow: 0 0 6px rgba(120, 226, 160, .35); }
+.atlas-map .l-route.is-dimmed { color: var(--atlas-route-dim); text-shadow: none; }
+.atlas-map .l-hi     { color: var(--atlas-hi); text-shadow: 0 0 8px rgba(120, 226, 160, .9); }
+.atlas-map .l-label  { color: var(--atlas-label); }
+.atlas-map .l-cursor { color: var(--atlas-hi); }
+
+.atlas-status {
+  margin: 8px 0 0;
+  padding: 0;
+  min-height: 1.6em;
+  font-size: .9rem;
+  color: var(--atlas-coast);
+  white-space: pre-wrap;
+}
+
+.atlas-status .k { color: var(--atlas-route); }
+.atlas-status .d { color: var(--atlas-label); }
+
+.atlas-trips {
+  margin: 24px 0 0;
+  overflow: hidden;
+}
+
+.atlas .atlas-table {
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  background: transparent !important;
+  font-size: .85rem !important;
+  line-height: 1.25;
+  white-space: pre !important;
+  word-wrap: normal !important;
+  color: var(--atlas-label);
+  overflow: visible;
+}
+
+.atlas .atlas-table .b { color: var(--atlas-frame); }
+.atlas .atlas-table .h { color: var(--atlas-coast); }
+.atlas .atlas-table .row { cursor: pointer; }
+.atlas .atlas-table .row:hover,
+.atlas .atlas-table .row.is-hover { color: var(--atlas-route); }
+.atlas .atlas-table .row.is-selected { color: var(--atlas-hi); }
+.atlas .atlas-table .row.is-selected .b { color: var(--atlas-route); }
+.atlas .atlas-table a { color: inherit; }
+
+@media (prefers-reduced-motion: reduce) {
+  .atlas-map .l-route { text-shadow: none; }
+}
